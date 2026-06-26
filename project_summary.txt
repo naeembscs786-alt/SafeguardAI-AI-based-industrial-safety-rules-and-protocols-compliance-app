@@ -1,0 +1,160 @@
+Project Summary: AI Safety Compliance App
+
+Project Structure:
+- Frontend: Expo React Native app in `my-app/src`
+- Backend: FastAPI API in `my-app/backend`
+- Configuration: `package.json`, `tsconfig.json`, `requirements.txt`, `package-lock.json`
+
+Tech Stack:
+- Frontend: Expo, React Native, Expo Router, AsyncStorage, Expo Location, Expo Image Picker, Expo AV
+- Backend: FastAPI, SQLAlchemy, Pydantic, passlib (bcrypt), python-jose JWT, dotenv
+- Database: SQLAlchemy with `DATABASE_URL` from environment
+
+Backend Files:
+1. `backend/database.py`
+   - Loads `DATABASE_URL` from `.env`
+   - Creates SQLAlchemy engine, sessionmaker, and declarative base
+   - Provides `get_db()` dependency for request-scoped DB sessions
+
+2. `backend/models.py`
+   - `User`: stores user identity, email, hashed password, role, and creation timestamp
+   - `Incident`: stores incident report details, worker owner, location, media text, status, reviewer, and timestamp
+   - `TrainingModule`: stores training module metadata, SOP steps, media URL, and creator
+   - `ModuleAssignment`: links assigned modules to worker users
+
+3. `backend/schemas.py`
+   - `UserCreate`, `UserLogin`, `UserResponse`
+   - `IncidentCreate`, `IncidentOut`
+   - `TrainingModuleCreate`, `TrainingModuleOut`, `AssignModule`, `ModuleAssignmentOut`
+
+4. `backend/auth.py`
+   - Hashes passwords with bcrypt via `passlib`
+   - Verifies passwords against the stored hash
+   - Creates JWT bearer tokens with HS256 and 60-minute expiry
+
+5. `backend/dependencies.py`
+   - Uses `OAuth2PasswordBearer` for token extraction
+   - `get_current_user`: decodes JWT and returns payload
+   - `require_role(role)`: enforces exact role matching and raises 403 if unauthorized
+
+6. `backend/main.py`
+   - Sets up FastAPI app with permissive CORS for development
+   - Creates DB tables automatically at startup
+   - API endpoints:
+     - `POST /register`: register a new user with `role` from request
+     - `POST /login`: validate credentials and return JWT
+     - `POST /incidents/`: worker report creation, authenticated
+     - `GET /incidents/`: list incidents for authenticated users
+     - `PUT /incidents/{incident_id}`: incident update for authenticated users
+     - `POST /modules`: admin-only training module creation
+     - `GET /modules`: admin-only list of training modules
+     - `POST /assign-module`: admin-only assign module to worker
+     - `GET /my-modules`: worker-only list assigned modules
+     - `POST /admin/assign-module/{module_id}/{user_id}`: admin-only assign module to worker
+     - `GET /admin/users`: admin-only list all users (current active path)
+     - `GET /profile`: return decoded user token payload
+     - `GET /officer/dashboard`: officer-only simple dashboard
+     - `GET /admin/dashboard`: admin-only simple dashboard
+     - `PUT /admin/change-role/{user_id}`: admin-only change user role
+     - `GET /incidents`: officer-only list incidents
+     - `PUT /incidents/{incident_id}/status`: officer-only status update
+     - `GET /`: health check
+     - `GET /hello`: health check
+   - Important backend issues:
+     - `GET /admin/users` is defined twice; the second definition overrides the first.
+     - No `/sos` endpoint is implemented, even though the frontend calls it.
+     - Incident model does not include `title`, but the officer UI expects one.
+
+Frontend Files:
+1. `src/constants/api.ts`
+   - Defines `API_BASE_URL` and `AI_CHAT_URL`
+   - Uses environment variables or local defaults
+
+2. `src/app/index.tsx`
+   - Landing screen with `LOGIN` and `REGISTER` buttons for app entry
+
+3. `src/app/login.tsx`
+   - Login form for email and password
+   - Calls backend `/login`
+   - Stores JWT in AsyncStorage
+   - Decodes token role and routes users:
+     - `admin` → `/(admin)/admin_dashboard`
+     - `officer` → `/(officer)/officer_dashboard`
+     - otherwise → `/(worker)/ai_assistant`
+
+4. `src/app/register.tsx`
+   - Registration form for name, email, password
+   - Sends POST to `/register` with fixed role `worker`
+   - Redirects to `/login` after success
+
+5. `src/app/(admin)/admin_dashboard.tsx`
+   - Admin dashboard fetches `/admin/users`
+   - Displays users and allows changing a user to `officer` or `admin`
+   - Logs out by removing token and navigating to login
+
+6. `src/app/(officer)/officer_dashboard.tsx`
+   - Officer dashboard fetches `/incidents`
+   - Shows incident cards with status and severity
+   - Allows marking incidents `resolved` or `in-progress`
+   - Logs out with token removal
+   - Note: UI expects `title`, but backend incidents have no `title` field
+
+7. `src/app/(worker)/_layout.tsx`
+   - Worker tab layout with four screens:
+     - `ai_assistant`
+     - `report_incident`
+     - `get_assigned_module`
+     - `sos_alert`
+   - Uses bottom tab bar styling and icons
+
+8. `src/app/(worker)/ai_assistant.tsx`
+   - Chat assistant for worker safety questions
+   - Local SOP responses for keywords: `fire`, `ppe`, `height`
+   - Falls back to external AI API at `AI_CHAT_URL`
+   - Shows bot and user chat bubbles
+   - Includes logout button
+
+9. `src/app/(worker)/report_incident.tsx`
+   - Creates incident reports with description, severity, and media selection
+   - Requests location permission and attaches GPS coordinates
+   - Sends POST to `/incidents/` with `status: pending`
+   - Media URIs are serialized to JSON and stored in backend text field
+
+10. `src/app/(worker)/get_assigned_module.tsx`
+    - Fetches assigned modules from `/my-modules`
+    - Displays list of module cards with title, industry, description, and SOP preview
+    - Shows loading indicator while waiting for backend
+    - This is the worker’s training module screen
+
+11. `src/app/(worker)/sos_alert.tsx`
+    - Emergency SOS screen for workers
+    - Requests location permission, vibrates device, and plays audio
+    - Sends POST to `/sos` with location and alert message
+    - Shows alerts for success or network failure
+    - Backend support for `/sos` is currently missing
+
+Project Behavior and Role Flow:
+- New registrations create users with role `worker`.
+- Login returns JWT tokens used for auth.
+- Admin users can change roles and manage users.
+- Officers can review incident reports and update statuses.
+- Workers can report incidents, access assigned training modules, use the AI assistant, and send SOS alerts.
+- Authentication is stored in AsyncStorage and used for protected API calls.
+
+Current Feature Observations:
+- The app now includes training module support in the backend and worker UI.
+- The worker layout no longer uses `sos_emergency`; it now uses `sos_alert`.
+- The worker `get_assigned_module` screen is an active route; `get_training_module.tsx` is no longer present.
+- There is a backend/frontend mismatch on incident `title`, which may break the officer screen.
+- The backend has admin module assignment endpoints, but no admin UI for module creation or assignment yet.
+- The SOS UI exists, but backend endpoint support is missing.
+- There is no explicit FR document in the workspace; this summary is inferred from the implemented files.
+
+Important Files by Responsibility:
+- Backend: `backend/main.py`, `backend/models.py`, `backend/schemas.py`, `backend/auth.py`, `backend/dependencies.py`, `backend/database.py`
+- Auth/API config: `src/constants/api.ts`, `src/app/login.tsx`, `src/app/register.tsx`
+- Admin: `src/app/(admin)/admin_dashboard.tsx`
+- Officer: `src/app/(officer)/officer_dashboard.tsx`
+- Worker: `src/app/(worker)/ai_assistant.tsx`, `src/app/(worker)/report_incident.tsx`, `src/app/(worker)/get_assigned_module.tsx`, `src/app/(worker)/sos_alert.tsx`, `src/app/(worker)/_layout.tsx`
+
+If you want, I can also add a separate section that maps these features to your functional requirement IDs once you provide them.
